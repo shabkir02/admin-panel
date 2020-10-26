@@ -1,6 +1,8 @@
 import '../../helpers/iframeLoader.js';
 import axios from 'axios';
 import React, {Component} from 'react';
+import DOMHelper from '../../helpers/dom-helper';
+import EditorText from '../editor-text';
 
 export default class Editor extends Component {
     constructor() {
@@ -25,31 +27,53 @@ export default class Editor extends Component {
     }
 
     open(page) {
-        this.currentPage = `../${page}`;
-        this.iframe.load(this.currentPage, () => {
-            const body = this.iframe.contentDocument.body;
-            let textNodes = [];
+        this.currentPage = page;
 
-            function recursy(element) {
-                element.childNodes.forEach(node => {
+        axios
+            .get(`../${page}?rnd=${Math.random()}`)
+            .then(res => DOMHelper.parseStrToDOM(res.data))
+            .then(DOMHelper.wrapTextNodes)
+            .then(dom => {
+                this.virtualDom = dom;
+                return dom;
+            })
+            .then(DOMHelper.serializeDOMToString)
+            .then(html => axios.post('./api/saveTempPage.php', {html}))
+            .then(() => this.iframe.load('../temp.html'))
+            .then(() => this.enableEditing())
+            .then(() => this.injectStyles());
+    }
 
-                    if (node.nodeName === '#text' && node.nodeValue.replace(/\s+/g, '').length > 0) {
-                        textNodes.push(node)
-                    } else {
-                        recursy(node);
-                    }
-                })
-            }
+    save() {
+        const newDom = this.virtualDom.cloneNode(this.virtualDom);
+        DOMHelper.unwrapTextNodes(newDom);
+        const html = DOMHelper.serializeDOMToString(newDom);
+        axios
+            .post('./api/savePage.php', {pageName: this.currentPage, html})
+    }
 
-            recursy(body);
+    enableEditing() {
+        this.iframe.contentDocument.body.querySelectorAll('text-editor').forEach(element => {
+            const id = element.getAttribute('nodeid');
+            const virtualElement = this.virtualDom.body.querySelector(`[nodeid="${id}"]`);
 
-            textNodes.forEach(node => {
-                const wrapper = this.iframe.contentDocument.createElement('text-editor');
-                node.parentNode.replaceChild(wrapper, node);
-                wrapper.appendChild(node);
-                wrapper.contentEditable = 'true';
-            });
+            new EditorText(element, virtualElement);
         });
+    }
+
+    injectStyles() {
+        const style = this.iframe.contentDocument.createElement('style');
+        style.innerHTML = `
+            text-editor:hover {
+                outline: 3px solid orange;
+                outline-offset: 8px;
+            }
+            text-editor:focus {
+                outline: 3px solid red;
+                outline-offset: 8px;
+            }
+        `;
+        this.iframe.contentDocument.head.appendChild(style);        
     }
 
     loadPageList() {
@@ -85,7 +109,12 @@ export default class Editor extends Component {
         // })
 
         return (
-            <iframe src={this.currentPage} frameBorder="0"></iframe>
+            <>
+                <button onClick={() => this.save()}>Click</button>
+                <iframe src={this.currentPage} frameBorder="0"></iframe>
+            </>
+
+            
             // <iframe>
             //    <input 
             //         type="text"
