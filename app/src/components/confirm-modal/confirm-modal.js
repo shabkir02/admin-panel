@@ -3,6 +3,7 @@ import React from 'react';
 import UIkit from 'uikit';
 
 const ConfirmModal = ({modal, target, method}) => {
+    
     return (
         <div id={target} uk-modal={modal.toString()}>
             <div className="uk-modal-dialog uk-modal-body">
