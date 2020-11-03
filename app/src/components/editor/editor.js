@@ -10,6 +10,7 @@ import ChooseModal from '../choose-modal';
 import Panel from '../panel';
 import EditorMeta from '../editor-meta';
 import EditorImages from '../editor-images';
+import Login from '../login';
 
 export default class Editor extends Component {
     constructor() {
@@ -19,29 +20,81 @@ export default class Editor extends Component {
             pageList: [],
             backupsList: [],
             newPageName: '',
-            loading: true
+            loading: true,
+            auth: false,
+            loginError: false,
+            loginLengthError: false
         }
 
         this.isLoading = this.isLoading.bind(this);
         this.isLoaded = this.isLoaded.bind(this);
         this.save = this.save.bind(this);
         this.init = this.init.bind(this);
+        this.login = this.login.bind(this);
+        this.logout = this.logout.bind(this);
         this.restoreBackup = this.restoreBackup.bind(this);
     }
 
     componentDidMount() {
-        this.init(null, this.currentPage)
+        this.checkAuth();
+    }
+
+    componentDidUpdate(prevProps, prevState) {
+        if (this.state.auth !== prevState.auth) {
+            this.init(null, this.currentPage);
+        }
+    }
+
+    checkAuth() {
+        axios
+            .get("./api/checkAuth.php")
+            .then(res => {
+                this.setState({
+                    auth: res.data.auth
+                })
+            })
+    }
+
+    login(pass) {
+        if (pass.length > 4) {
+            axios
+                .post('./api/login.php', {"password": pass})
+                .then(res => {
+                    this.setState({
+                        auth: res.data.auth,
+                        loginError: !res.data.auth,
+                        loginLengthError: false
+                    })
+                })
+        } else {
+            this.setState({
+                loginError: false,
+                loginLengthError: true
+            })
+        }
+    }
+
+    logout() {
+        axios
+            .get('./api/logout.php')
+            .then(() => {
+                window.location.replace('/');
+            })
     }
 
     init(e, page) {
         if (e) {
             e.preventDefault();
         }
-        this.isLoading();
-        this.iframe = document.querySelector('iframe');
-        this.open(page, this.isLoaded);
-        this.loadPageList();
-        this.loadBackupsList();
+
+        if (this.state.auth) {
+            this.isLoading();
+            this.iframe = document.querySelector('iframe');
+            this.open(page, this.isLoaded);
+            this.loadPageList();
+            this.loadBackupsList();
+        }
+        
     }
 
     open(page, cb) {
@@ -67,16 +120,17 @@ export default class Editor extends Component {
         this.loadBackupsList();
     }
 
-    async save(onSuccess, onError) {
+    async save() {
         this.isLoading();
         const newDom = this.virtualDom.cloneNode(this.virtualDom);
         DOMHelper.unwrapTextNodes(newDom);
         DOMHelper.unwrapImages(newDom);
         const html = DOMHelper.serializeDOMToString(newDom);
         await axios
-            .post('./api/savePage.php', {pageName: this.currentPage, html})
+            .post('./api/savePage.php', {pageName: this.currentPage, html}),
+            then(() => this.showNotification('Успешно сохранено', 'success'))
             .then(onSuccess)
-            .catch(onError)
+            .catch(() => this.showNotification('Ошибка сохранения', 'danger'))
             .finally(this.isLoaded);
         
         this.loadBackupsList();
@@ -94,7 +148,7 @@ export default class Editor extends Component {
             const id = element.getAttribute('editableimgid');
             const virtualElement = this.virtualDom.body.querySelector(`[editableimgid="${id}"]`);
 
-            new EditorImages(element, virtualElement);
+            new EditorImages(element, virtualElement, this.isLoading, this.isLoaded, this.showNotification);
         });
     }
 
@@ -115,6 +169,10 @@ export default class Editor extends Component {
             }
         `;
         this.iframe.contentDocument.head.appendChild(style);        
+    }
+
+    showNotification(message, status) {
+        UIkit.notification({message, status})
     }
 
     loadPageList() {
@@ -159,11 +217,15 @@ export default class Editor extends Component {
     }
 
     render() {
-        const {loading, pageList, backupsList} = this.state;
+        const {loading, pageList, backupsList, auth, loginError, loginLengthError} = this.state;
         const modal = true;
         let spinner;
 
         loading ? spinner = <Spinner active/> : spinner = <Spinner/> 
+
+        if (!auth) {
+            return <Login login={this.login} lengthErr={loginLengthError} logErr={loginError}/>
+        }
 
         return (
             <>
@@ -182,7 +244,25 @@ export default class Editor extends Component {
                 <Panel/>
                 
 
-                <ConfirmModal modal={modal} target={'modal-save'} method={this.save}/>
+                <ConfirmModal 
+                    modal={modal} 
+                    target={'modal-save'} 
+                    method={this.save}
+                    text={{
+                        title: 'Сохранение',
+                        descr: 'Вы действительно хотите сохранить изменения?',
+                        btn: 'Опубликовать'
+                    }}/>
+
+                <ConfirmModal 
+                    modal={modal} 
+                    target={'modal-logout'} 
+                    method={this.logout}
+                    text={{
+                        title: 'Выход',
+                        descr: 'Вы действительно хотите выйти?',
+                        btn: 'Выйти'
+                    }}/>
                 <ChooseModal modal={modal} target={'modal-open'} data={pageList} rederect={this.init} />
                 <ChooseModal modal={modal} target={'modal-backup'} data={backupsList} rederect={this.restoreBackup} />
                 {this.virtualDom ? <EditorMeta modal={modal} target={'modal-meta'} virtualDom={this.virtualDom} /> : false}
